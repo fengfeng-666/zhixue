@@ -19,6 +19,7 @@ def setup():
         conn.execute('CREATE EXTENSION IF NOT EXISTS vector')
         conn.execute('''
         CREATE TABLE IF NOT EXISTS users (id BIGSERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, preference TEXT NOT NULL DEFAULT '');
+        CREATE TABLE IF NOT EXISTS model_settings (user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, base_url TEXT NOT NULL, chat_model TEXT NOT NULL, vision_model TEXT NOT NULL, embedding_model TEXT NOT NULL, api_key_encrypted TEXT NOT NULL DEFAULT '');
         CREATE TABLE IF NOT EXISTS tokens (token_hash TEXT PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '30 days');
         CREATE TABLE IF NOT EXISTS courses (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id), name TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
         CREATE TABLE IF NOT EXISTS documents (id BIGSERIAL PRIMARY KEY, course_id BIGINT NOT NULL REFERENCES courses(id) ON DELETE CASCADE, name TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now());

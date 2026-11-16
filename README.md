@@ -4,18 +4,19 @@
 
 ## 启动
 
-需要 Docker Compose 和兼容 OpenAI 接口、支持工具调用、图片理解及 1536 维 embedding 的模型服务。
+需要 Docker Compose 和兼容 OpenAI 接口、支持工具调用、图片理解及 1536 维 embedding 的模型服务。模型配置可在登录后的「模型设置」中填写并保存，也可通过环境变量设置服务端默认值。
 
 ```bash
 cp .env.example .env
-# 编辑 .env，填写 OPENAI_API_KEY；按需修改 OPENAI_BASE_URL 和模型名
+# 可选：编辑 .env 设置服务端默认模型；也可在页面中单独配置
 docker compose up --build
 ```
 
-打开 http://localhost:8000，注册登录后创建课程并上传资料。API 文档在 http://localhost:8000/docs。停止服务使用 `docker compose down`；PostgreSQL 数据保存在 Docker volume 中。
+打开 http://localhost:8000，注册登录后打开「模型设置」填写接口地址、API Key 和模型名称，创建课程并在知识库中上传图片或文档。API 文档在 http://localhost:8000/docs。停止服务使用 `docker compose down`；PostgreSQL 数据保存在 Docker volume 中。
 
 ## 功能与实现
 
+- 每个账户可以单独配置接口地址、对话模型、视觉模型、向量模型和 API Key；密钥经 Fernet 加密后存储，读取设置时不会返回密钥明文。加密密钥保存在 app_data 卷，备份和迁移时需与数据库一同保留。已有资料时，需先删除资料才能更换接口地址或向量模型。
 - 每个账户独立管理课程、文档、会话、错题和学习偏好；密码采用 PBKDF2，登录令牌只保存哈希。课程相关查询校验归属。
 - 支持 UTF-8 文本、Markdown、可提取文本的 PDF、DOCX、PPTX 和 PNG/JPEG/WebP。图片通过视觉模型识别；文档提取文本后切分、向量化并存入 PostgreSQL/pgvector。单文件上限 10 MB、200 个片段。扫描版 PDF、文档中嵌入的图片和公式图片暂未自动识别，可先导出为图片上传。
 - 向量召回和中文字符二元组关键词召回，经倒数排名融合排序；回答可引用资料名和片段编号。模型依据会话上下文生成独立检索问题，跨会话检索同课程历史与错题。

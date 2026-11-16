@@ -15,7 +15,7 @@ from langgraph.checkpoint.postgres import PostgresSaver
 from pydantic import BaseModel, Field
 from psycopg.errors import UniqueViolation
 
-from . import ai, db
+from . import ai, db, settings
 from .core import chunks, extract_text, password_hash, verify_password
 
 @asynccontextmanager
@@ -35,6 +35,14 @@ class CourseIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
 class PreferenceIn(BaseModel):
     preference: str = Field(max_length=2000)
+class ModelSettingsIn(BaseModel):
+    base_url: str = Field(min_length=1, max_length=1000)
+    chat_model: str = Field(min_length=1, max_length=200)
+    vision_model: str = Field(min_length=1, max_length=200)
+    embedding_model: str = Field(min_length=1, max_length=200)
+    api_key: str | None = Field(default=None, max_length=2000)
+    clear_api_key: bool = False
+
 class ChatIn(BaseModel):
     message: str = Field(min_length=1, max_length=8000)
     mode: Literal['qa', 'explain', 'review', 'plan', 'quiz'] = 'qa'
@@ -109,6 +117,33 @@ def update_me(data: PreferenceIn, user=Depends(current_user)):
         conn.execute('UPDATE users SET preference=%s WHERE id=%s', (data.preference, user['id']))
     return {'ok':True}
 
+@app.get('/api/model-settings')
+def get_model_settings(user=Depends(current_user)):
+    config = settings.load(user['id'])
+    return {k: v for k, v in config.items() if k != 'api_key'} | {'has_key': bool(config['api_key'])}
+
+@app.put('/api/model-settings')
+def save_model_settings(data: ModelSettingsIn, user=Depends(current_user)):
+    base_url = data.base_url.strip().rstrip('/')
+    names = [data.chat_model.strip(), data.vision_model.strip(), data.embedding_model.strip()]
+    if not settings.valid_base_url(base_url) or not all(names):
+        raise HTTPException(400, '请填写有效的接口地址和模型名称')
+    with db.connection() as conn:
+        conn.execute('SELECT id FROM users WHERE id=%s FOR UPDATE', (user['id'],))
+        previous = conn.execute('SELECT * FROM model_settings WHERE user_id=%s', (user['id'],)).fetchone()
+        old = previous or settings.defaults()
+        has_documents = conn.execute('SELECT EXISTS(SELECT 1 FROM documents d JOIN courses c ON c.id=d.course_id WHERE c.user_id=%s) AS found', (user['id'],)).fetchone()['found']
+        if has_documents and (old['base_url'].rstrip('/') != base_url or old['embedding_model'] != names[2]):
+            raise HTTPException(409, '已有资料使用当前向量模型建立索引。请先删除所有课程资料，再更改接口地址或向量模型。')
+        encrypted = previous['api_key_encrypted'] if previous else ''
+        if data.clear_api_key:
+            encrypted = ''
+        elif data.api_key and data.api_key.strip():
+            encrypted = settings.cipher().encrypt(data.api_key.strip().encode()).decode()
+        conn.execute('''INSERT INTO model_settings (user_id,base_url,chat_model,vision_model,embedding_model,api_key_encrypted)
+          VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (user_id) DO UPDATE SET base_url=EXCLUDED.base_url, chat_model=EXCLUDED.chat_model, vision_model=EXCLUDED.vision_model, embedding_model=EXCLUDED.embedding_model, api_key_encrypted=EXCLUDED.api_key_encrypted''', (user['id'],base_url,*names,encrypted))
+    return {'ok': True}
+
 @app.get('/api/courses')
 def courses(user=Depends(current_user)):
     with db.connection() as conn:
@@ -129,6 +164,9 @@ def documents(course_id: int, user=Depends(current_user)):
 async def upload(course_id: int, file: UploadFile = File(...), user=Depends(current_user)):
     with db.connection() as conn:
         owned_course(conn,user,course_id)
+    config = settings.load(user['id'])
+    if not config['api_key']:
+        raise HTTPException(400, '请先在模型设置中配置 API Key')
     data = await file.read(10 * 1024 * 1024 + 1)
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(413, '文件不能超过 10 MB')
@@ -137,7 +175,7 @@ async def upload(course_id: int, file: UploadFile = File(...), user=Depends(curr
     try:
         if suffix in ('.png','.jpg','.jpeg','.webp'):
             mime = {'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp'}[suffix]
-            text = ai.image_text(data, mime)
+            text = ai.image_text(data, mime, config)
         else:
             text = extract_text(name, data)
     except (ValueError, UnicodeError) as exc:
@@ -150,11 +188,15 @@ async def upload(course_id: int, file: UploadFile = File(...), user=Depends(curr
     if len(parts) > 200:
         raise HTTPException(400, '文档过长，请拆分为不超过 200 个片段的文件')
     try:
-        vectors = ai.embeddings(parts)
+        vectors = ai.embeddings(parts, config)
     except Exception as exc:
         raise HTTPException(502, '向量化失败，请检查模型配置') from exc
     with db.connection() as conn:
+        conn.execute('SELECT id FROM users WHERE id=%s FOR UPDATE', (user['id'],))
         owned_course(conn,user,course_id)
+        current = settings.load(user['id'])
+        if (current['base_url'].rstrip('/'), current['embedding_model']) != (config['base_url'].rstrip('/'), config['embedding_model']):
+            raise HTTPException(409, '模型设置已更改，请重新导入资料')
         doc = conn.execute('INSERT INTO documents (course_id,name) VALUES (%s,%s) RETURNING id,name', (course_id,name)).fetchone()
         for part, vector in zip(parts, vectors):
             conn.execute('INSERT INTO chunks (document_id,content,embedding) VALUES (%s,%s,%s::vector)', (doc['id'],part,str(vector)))
@@ -198,6 +240,9 @@ def history(course_id: int, conversation_id: uuid.UUID, user=Depends(current_use
 
 @app.post('/api/courses/{course_id}/chat')
 def chat(course_id: int, data: ChatIn, user=Depends(current_user)):
+    config = settings.load(user['id'])
+    if not config['api_key']:
+        raise HTTPException(400, '请先在模型设置中配置 API Key')
     conversation_id = data.conversation_id or uuid.uuid4()
     with db.connection() as conn:
         owned_course(conn,user,course_id)
@@ -209,7 +254,7 @@ def chat(course_id: int, data: ChatIn, user=Depends(current_user)):
             conn.execute('INSERT INTO conversations (id,user_id,course_id,title) VALUES (%s,%s,%s,%s)', (conversation_id,user['id'],course_id,data.message[:40]))
     try:
         with PostgresSaver.from_conn_string(db.DATABASE_URL) as saver:
-            answer = ai.run_agent(user['id'],course_id,conversation_id,data.message,data.mode,user['preference'],saver)
+            answer = ai.run_agent(user['id'],course_id,conversation_id,data.message,data.mode,user['preference'],saver,config)
     except Exception as exc:
         raise HTTPException(502, '生成失败，请检查模型、网络和数据库配置后重试') from exc
     with db.connection() as conn:
