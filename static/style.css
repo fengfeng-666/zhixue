@@ -260,6 +260,7 @@ label small { display: block; font-weight: 400; line-height: 1.6; color: #87998d
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 17px; }
 .form-grid .wide { grid-column: 1 / -1; }
 .form-grid input { font-size: 12px; }
+.form-grid .key-warning { color: #a45545; }
 .settings-intro { display: flex; align-items: center; gap: 12px; background: #f1f6eb; border-radius: 9px; padding: 12px 14px; margin-bottom: 20px; }
 .settings-intro span { color: #6d9c71; font-size: 22px; }
 .settings-intro p { font-size: 11px; margin: 0; color: #738e79; }

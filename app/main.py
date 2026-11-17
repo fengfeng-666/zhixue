@@ -9,7 +9,7 @@ from typing import Literal
 
 import redis
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from langgraph.checkpoint.postgres import PostgresSaver
 from pydantic import BaseModel, Field
@@ -27,6 +27,11 @@ async def lifespan(app):
 
 app = FastAPI(title='知学', lifespan=lifespan)
 app.mount('/static', StaticFiles(directory=Path(__file__).parent.parent / 'static'), name='static')
+
+@app.exception_handler(settings.KeyDecryptionError)
+async def key_decryption_error_handler(request, exc):
+    return JSONResponse(status_code=409, content={'detail': str(exc)})
+
 
 class Credentials(BaseModel):
     username: str = Field(min_length=3, max_length=80)
@@ -119,7 +124,7 @@ def update_me(data: PreferenceIn, user=Depends(current_user)):
 
 @app.get('/api/model-settings')
 def get_model_settings(user=Depends(current_user)):
-    config = settings.load(user['id'])
+    config = settings.load(user['id'], allow_invalid_key=True)
     return {k: v for k, v in config.items() if k != 'api_key'} | {'has_key': bool(config['api_key'])}
 
 @app.put('/api/model-settings')
@@ -140,6 +145,8 @@ def save_model_settings(data: ModelSettingsIn, user=Depends(current_user)):
             encrypted = ''
         elif data.api_key and data.api_key.strip():
             encrypted = settings.cipher().encrypt(data.api_key.strip().encode()).decode()
+        elif encrypted:
+            settings.decrypt_api_key(encrypted)
         conn.execute('''INSERT INTO model_settings (user_id,base_url,chat_model,vision_model,embedding_model,api_key_encrypted)
           VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (user_id) DO UPDATE SET base_url=EXCLUDED.base_url, chat_model=EXCLUDED.chat_model, vision_model=EXCLUDED.vision_model, embedding_model=EXCLUDED.embedding_model, api_key_encrypted=EXCLUDED.api_key_encrypted''', (user['id'],base_url,*names,encrypted))
     return {'ok': True}

@@ -867,8 +867,11 @@ async function openModelSettings() {
   $('visionModel').value = config.vision_model;
   $('embeddingModel').value = config.embedding_model;
   $('apiKey').value = '';
-  $('apiKey').placeholder = config.has_personal_key ? '已保存，留空保持不变' : '输入 API Key';
-  $('keyHint').textContent = config.has_personal_key ? '已加密保存个人密钥；留空则保持不变。' : (config.has_key ? '当前使用服务端默认密钥；输入可设置个人密钥。' : '密钥加密存储，不会再次显示。');
+  $('apiKey').placeholder = config.key_error ? '重新输入 API Key' : (config.has_personal_key ? '已保存，留空保持不变' : '输入 API Key');
+  $('keyHint').textContent = config.key_error
+    ? '保存的密钥无法解密。请恢复原加密密钥，或重新输入 / 移除个人密钥。'
+    : (config.has_personal_key ? '已加密保存个人密钥；留空则保持不变。' : (config.has_key ? '当前使用服务端默认密钥；输入可设置个人密钥。' : '密钥加密存储，不会再次显示。'));
+  $('keyHint').classList.toggle('key-warning', Boolean(config.key_error));
   $('clearKey').classList.toggle('hidden', !config.has_personal_key);
   closeMobileMenu();
   $('settingsDialog').showModal();
