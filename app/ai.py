@@ -1,5 +1,6 @@
 import base64
 import os
+import math
 import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -18,9 +19,22 @@ def client(settings):
     return OpenAI(api_key=settings['api_key'] or 'missing', base_url=settings['base_url'])
 
 
+class EmbeddingError(ValueError):
+    pass
+
+
 def embeddings(texts, settings):
-    result = client(settings).embeddings.create(model=settings['embedding_model'], input=texts, dimensions=1536)
-    return [x.embedding for x in sorted(result.data, key=lambda x: x.index)]
+    result = client(settings).embeddings.create(model=settings['embedding_model'], input=texts)
+    entries = sorted(result.data, key=lambda x: x.index)
+    if len(entries) != len(texts) or [x.index for x in entries] != list(range(len(texts))):
+        raise EmbeddingError('向量模型返回的结果数量不正确，请检查模型配置。')
+    vectors = [item.embedding for item in entries]
+    dimensions = {len(vector) for vector in vectors}
+    if len(dimensions) != 1 or not dimensions or not (1 <= next(iter(dimensions)) <= 16000):
+        raise EmbeddingError('向量模型返回的维度不一致或超出支持范围（1～16000）。')
+    if any(not all(math.isfinite(value) for value in vector) or not any(vector) for vector in vectors):
+        raise EmbeddingError('向量模型返回了无效向量，请检查模型配置。')
+    return vectors
 
 
 def image_text(data, mime, settings):
@@ -33,6 +47,9 @@ def retrieve(user_id, course_id, query, settings):
     vector = embeddings([query], settings)[0]
     terms = keywords(query)
     with connection() as conn:
+        existing = conn.execute('''SELECT vector_dims(ch.embedding) AS dim FROM chunks ch JOIN documents d ON d.id=ch.document_id JOIN courses c ON c.id=d.course_id WHERE c.user_id=%s LIMIT 1''', (user_id,)).fetchone()
+        if existing and existing['dim'] != len(vector):
+            raise EmbeddingError(f"当前向量模型返回 {len(vector)} 维，但已有资料使用 {existing['dim']} 维，请恢复原模型或删除资料后重新导入。")
         # Both candidate lists are constrained to the authenticated user's course.
         vector_rows = conn.execute('''SELECT ch.id, ch.content, d.name FROM chunks ch JOIN documents d ON d.id=ch.document_id JOIN courses c ON c.id=d.course_id WHERE c.id=%s AND c.user_id=%s ORDER BY ch.embedding <=> %s::vector LIMIT 20''', (course_id, user_id, str(vector))).fetchall()
         keyword_rows = conn.execute('''SELECT ch.id, ch.content, d.name FROM chunks ch JOIN documents d ON d.id=ch.document_id JOIN courses c ON c.id=d.course_id WHERE c.id=%s AND c.user_id=%s AND EXISTS (SELECT 1 FROM unnest(%s::text[]) term WHERE lower(ch.content) LIKE '%%' || term || '%%') LIMIT 100''', (course_id, user_id, terms)).fetchall()

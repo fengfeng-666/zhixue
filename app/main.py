@@ -151,8 +151,11 @@ def courses(user=Depends(current_user)):
 
 @app.post('/api/courses')
 def create_course(data: CourseIn, user=Depends(current_user)):
+    name = data.name.strip()
+    if not name:
+        raise HTTPException(400, '请输入课程名称')
     with db.connection() as conn:
-        return conn.execute('INSERT INTO courses (user_id,name) VALUES (%s,%s) RETURNING id,name', (user['id'],data.name.strip())).fetchone()
+        return conn.execute('INSERT INTO courses (user_id,name) VALUES (%s,%s) RETURNING id,name', (user['id'],name)).fetchone()
 
 @app.get('/api/courses/{course_id}/documents')
 def documents(course_id: int, user=Depends(current_user)):
@@ -189,14 +192,19 @@ async def upload(course_id: int, file: UploadFile = File(...), user=Depends(curr
         raise HTTPException(400, '文档过长，请拆分为不超过 200 个片段的文件')
     try:
         vectors = ai.embeddings(parts, config)
+    except ai.EmbeddingError as exc:
+        raise HTTPException(502, str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(502, '向量化失败，请检查模型配置') from exc
+        raise HTTPException(502, '向量化失败，请检查接口地址、API Key 和向量模型是否可用') from exc
     with db.connection() as conn:
         conn.execute('SELECT id FROM users WHERE id=%s FOR UPDATE', (user['id'],))
         owned_course(conn,user,course_id)
         current = settings.load(user['id'])
         if (current['base_url'].rstrip('/'), current['embedding_model']) != (config['base_url'].rstrip('/'), config['embedding_model']):
             raise HTTPException(409, '模型设置已更改，请重新导入资料')
+        existing = conn.execute('''SELECT vector_dims(ch.embedding) AS dim FROM chunks ch JOIN documents d ON d.id=ch.document_id JOIN courses c ON c.id=d.course_id WHERE c.user_id=%s LIMIT 1''', (user['id'],)).fetchone()
+        if existing and existing['dim'] != len(vectors[0]):
+            raise HTTPException(409, f"当前向量模型返回 {len(vectors[0])} 维，但已有资料使用 {existing['dim']} 维，请恢复原模型或删除资料后重新导入。")
         doc = conn.execute('INSERT INTO documents (course_id,name) VALUES (%s,%s) RETURNING id,name', (course_id,name)).fetchone()
         for part, vector in zip(parts, vectors):
             conn.execute('INSERT INTO chunks (document_id,content,embedding) VALUES (%s,%s,%s::vector)', (doc['id'],part,str(vector)))
@@ -250,14 +258,19 @@ def chat(course_id: int, data: ChatIn, user=Depends(current_user)):
             row = conn.execute('SELECT id FROM conversations WHERE id=%s AND user_id=%s AND course_id=%s', (conversation_id,user['id'],course_id)).fetchone()
             if not row:
                 raise HTTPException(404, '会话不存在')
-        else:
-            conn.execute('INSERT INTO conversations (id,user_id,course_id,title) VALUES (%s,%s,%s,%s)', (conversation_id,user['id'],course_id,data.message[:40]))
     try:
         with PostgresSaver.from_conn_string(db.DATABASE_URL) as saver:
             answer = ai.run_agent(user['id'],course_id,conversation_id,data.message,data.mode,user['preference'],saver,config)
+    except ai.EmbeddingError as exc:
+        raise HTTPException(502, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(502, '生成失败，请检查模型、网络和数据库配置后重试') from exc
     with db.connection() as conn:
+        # The graph stores checkpoints separately using the generated UUID.  Only
+        # create the visible conversation after a successful first response, and
+        # commit it together with its messages.
+        if not data.conversation_id:
+            conn.execute('INSERT INTO conversations (id,user_id,course_id,title) VALUES (%s,%s,%s,%s)', (conversation_id,user['id'],course_id,data.message[:40]))
         conn.execute('INSERT INTO messages (conversation_id,role,content) VALUES (%s,%s,%s),(%s,%s,%s)', (conversation_id,'user',data.message,conversation_id,'assistant',answer))
     try:
         key = f'conversation:{user["id"]}:{conversation_id}'
@@ -277,3 +290,12 @@ def add_mistake(course_id: int, data: MistakeIn, user=Depends(current_user)):
     with db.connection() as conn:
         owned_course(conn,user,course_id)
         return conn.execute('INSERT INTO mistakes (user_id,course_id,question,answer) VALUES (%s,%s,%s,%s) RETURNING id', (user['id'],course_id,data.question,data.answer)).fetchone()
+
+@app.delete('/api/courses/{course_id}/mistakes/{mistake_id}')
+def delete_mistake(course_id: int, mistake_id: int, user=Depends(current_user)):
+    with db.connection() as conn:
+        owned_course(conn,user,course_id)
+        deleted = conn.execute('DELETE FROM mistakes WHERE id=%s AND course_id=%s AND user_id=%s RETURNING id', (mistake_id,course_id,user['id'])).fetchone()
+        if not deleted:
+            raise HTTPException(404, '错题不存在')
+    return {'ok':True}

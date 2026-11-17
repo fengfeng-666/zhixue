@@ -23,9 +23,14 @@ def setup():
         CREATE TABLE IF NOT EXISTS tokens (token_hash TEXT PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '30 days');
         CREATE TABLE IF NOT EXISTS courses (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id), name TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
         CREATE TABLE IF NOT EXISTS documents (id BIGSERIAL PRIMARY KEY, course_id BIGINT NOT NULL REFERENCES courses(id) ON DELETE CASCADE, name TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
-        CREATE TABLE IF NOT EXISTS chunks (id BIGSERIAL PRIMARY KEY, document_id BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE, content TEXT NOT NULL, embedding vector(1536) NOT NULL);
-        CREATE INDEX IF NOT EXISTS chunks_vector_idx ON chunks USING hnsw (embedding vector_cosine_ops);
+        CREATE TABLE IF NOT EXISTS chunks (id BIGSERIAL PRIMARY KEY, document_id BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE, content TEXT NOT NULL, embedding vector NOT NULL);
         CREATE TABLE IF NOT EXISTS conversations (id UUID PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id), course_id BIGINT NOT NULL REFERENCES courses(id), title TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
         CREATE TABLE IF NOT EXISTS messages (id BIGSERIAL PRIMARY KEY, conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE, role TEXT NOT NULL, content TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
         CREATE TABLE IF NOT EXISTS mistakes (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id), course_id BIGINT NOT NULL REFERENCES courses(id), question TEXT NOT NULL, answer TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now());
         ''')
+        # A variable-dimension column keeps existing vectors while allowing each user
+        # to select an embedding model with its own output size.
+        dimension = conn.execute("SELECT atttypmod FROM pg_attribute WHERE attrelid = 'chunks'::regclass AND attname = 'embedding'").fetchone()[0]
+        if dimension != -1:
+            conn.execute('DROP INDEX IF EXISTS chunks_vector_idx')
+            conn.execute('ALTER TABLE chunks ALTER COLUMN embedding TYPE vector')
