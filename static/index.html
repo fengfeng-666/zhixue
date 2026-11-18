@@ -72,42 +72,35 @@
       <div class="brand"><span class="brand-mark">✳</span><span class="brand-word">知学<small>ZHIXUE / LEARNING SPACE</small></span></div>
       <button id="closeMobileMenu" class="mobile-close icon-button" type="button" aria-label="关闭菜单">×</button>
     </div>
-    <div class="side-intro"><span>YOUR SPACE</span><span>●</span></div>
     <div class="side-heading"><span>我的课程</span><button id="addCourse" class="icon-button" type="button" aria-label="新建课程" title="新建课程">＋</button></div>
     <div id="courses" class="course-list"></div>
     <button id="firstCourse" class="side-add" type="button"><span>＋</span> 添加课程</button>
     <div class="sidebar-spacer"></div>
-    <div class="side-promo"><div class="side-promo-top"><span>✳</span><span>PERSONAL AI</span></div><strong>让学习，<br>更有自己的节奏。</strong><p>连接模型，开启你的专属学习助手。</p><button id="openSettingsSide" type="button">配置模型 <span>↗</span></button></div>
     <div class="side-utilities"><button id="openPreference" class="side-link" type="button"><span class="side-link-icon">☷</span><span>学习偏好</span><span>↗</span></button><button id="openSettings" class="side-link" type="button"><span class="side-link-icon">⚙</span><span>模型设置</span><span>↗</span></button></div>
     <div class="side-user"><div class="avatar" id="avatar">学</div><div class="user-label"><strong id="userName">学习者</strong><small>个人学习空间</small></div><button id="logout" class="text-button" type="button" title="退出登录">退出</button></div>
   </aside>
   <main class="main">
     <header class="topbar">
       <div class="topbar-left"><button id="mobileMenu" class="mobile-menu" type="button" aria-controls="sidebar" aria-label="打开菜单" aria-expanded="false"><span></span><span></span></button><div class="breadcrumb"><span>我的学习空间</span><b>/</b><strong id="breadcrumb">概览</strong></div></div>
-      <div class="top-actions"><span class="top-note"><span class="top-note-dot"></span> 今天也在认真学习</span><button id="topSettings" class="top-settings" type="button"><span>⚙</span> 模型设置</button></div>
+      <button id="topSettings" class="top-settings" type="button">模型设置</button>
     </header>
     <div class="content">
       <div id="empty" class="empty">
         <div class="empty-hero">
-          <div class="empty-hero-copy"><div class="eyebrow light-eyebrow"><span></span> YOUR LEARNING SPACE</div><h1>好好学习，<br><em>一步一步，<br>成为更好的自己。</em></h1><p>把课程、资料和问题放在一起。<br>从今天的一个小问题开始，让理解自然发生。</p><button id="emptyCourse" class="primary primary-light" type="button">创建第一门课程 <span>↗</span></button></div>
-          <div class="empty-visual" aria-hidden="true"><div class="visual-orbit orbit-one"></div><div class="visual-orbit orbit-two"></div><div class="visual-star">✳</div><div class="visual-note note-one"><span>01 / EXPLORE</span><strong>从好奇开始</strong><i>↗</i></div><div class="visual-note note-two"><span>02 / UNDERSTAND</span><strong>把知识变成理解</strong><i>✳</i></div><span class="visual-spark">✦</span></div>
+          <h1>创建第一门课程</h1>
+          <p>把课件、笔记和对话整理在同一门课程里。</p>
+          <button id="emptyCourse" class="primary" type="button">创建课程</button>
         </div>
-        <div class="onboarding-head"><div><span class="section-kicker">A LITTLE GUIDE</span><h2>你的学习之旅，从这里开始</h2></div><p>只需几步，就能拥有自己的学习空间。</p></div>
-        <div class="onboarding-grid"><article class="onboarding-card"><span class="step-no">01</span><div class="step-icon">▧</div><h3>创建课程</h3><p>给每门课一个独立空间，学习内容不再混乱。</p><button id="onboardCourse" class="onboard-link" type="button">创建课程 ↗</button></article><article class="onboarding-card"><span class="step-no">02</span><div class="step-icon">↗</div><h3>连接模型</h3><p>在模型设置中填入你的服务信息，让助手准备就绪。</p><button id="onboardSettings" class="onboard-link" type="button">前往设置 ↗</button></article><article class="onboarding-card"><span class="step-no">03</span><div class="step-icon">✳</div><h3>导入资料，开始提问</h3><p>上传课件和笔记，让每一次交流更贴近你的课程。</p></article></div>
       </div>
       <div id="courseView" class="hidden">
-        <div class="page-heading"><div><div class="eyebrow"><span></span> MY LEARNING SPACE <b>/</b> 课程工作台</div><h1 id="courseName"></h1><p>让每一次提问，都离理解更近一点。</p></div><button id="newChat" class="outline new-chat" type="button"><span>＋</span> 新建对话</button></div>
+        <div class="page-heading"><h1 id="courseName"></h1><button id="newChat" class="outline new-chat" type="button"><span aria-hidden="true">＋</span> 新建对话</button></div>
         <nav class="tabs" role="tablist" aria-label="课程功能"><button class="tab active" id="tab-chat" data-tab="chat" role="tab" aria-controls="chat" type="button">学习助手</button><button class="tab" id="tab-docs" data-tab="docs" role="tab" aria-controls="docs" type="button">课程知识库 <span id="docCount">0</span></button><button class="tab" id="tab-mistakes" data-tab="mistakes" role="tab" aria-controls="mistakes" type="button">错题本 <span id="mistakeCount">0</span></button></nav>
-        <div id="chat" role="tabpanel" aria-labelledby="tab-chat" class="panel"><div class="assistant-layout">
-          <div class="chat-card"><div class="card-top"><div class="assistant-identity"><div class="assistant-icon">✳</div><div><strong>知学助手</strong><small>你的课程学习伙伴</small></div></div><div class="conversation-control"><span>对话记录</span><select id="conversations" aria-label="切换对话"><option value="">新会话</option></select></div></div>
+        <div id="chat" role="tabpanel" aria-labelledby="tab-chat" class="panel">
+          <div class="chat-card"><div class="card-top"><label for="conversations">对话记录</label><select id="conversations"><option value="">新会话</option></select></div>
             <div id="messages" class="messages" aria-live="polite" aria-label="对话内容"></div>
-            <div class="composer-wrap"><div class="composer"><textarea id="question" maxlength="8000" placeholder="输入问题，或者说说你想学什么…" aria-label="输入问题"></textarea><div class="composer-bottom"><div class="composer-tools"><span class="mode-dot">✳</span><select id="mode" aria-label="学习模式"><option value="qa">课程问答</option><option value="explain">知识讲解</option><option value="review">错题复盘</option><option value="plan">学习规划</option><option value="quiz">生成测验</option></select><span class="composer-key">Enter 发送 · Shift + Enter 换行</span></div><button id="send" class="send" type="button" aria-label="发送问题">发送 <span>↗</span></button></div></div><div class="composer-hint">AI 生成内容可能有误，请结合课程资料核实。</div></div>
+            <div class="composer-wrap"><div class="composer"><textarea id="question" maxlength="8000" placeholder="输入课程问题…" aria-label="输入问题"></textarea><div class="composer-bottom"><div class="composer-tools"><select id="mode" aria-label="学习模式"><option value="qa">课程问答</option><option value="explain">知识讲解</option><option value="review">错题复盘</option><option value="plan">学习规划</option><option value="quiz">生成测验</option></select><span class="composer-key">Enter 发送 · Shift + Enter 换行</span></div><button id="send" class="send" type="button" aria-label="发送问题">发送 <span aria-hidden="true">↑</span></button></div></div><div class="composer-hint">AI 生成内容可能有误，请结合课程资料核实。</div></div>
           </div>
-          <aside class="context-panel"><div class="context-heading"><span>学习小助手</span><span>✳</span></div><div class="context-card"><div class="context-card-top"><span>COURSE KIT</span><span>✳</span></div><h3>让知识<br>有迹可循<span>。</span></h3><p>导入课程资料，获得更贴近学习内容的回答。</p><div class="context-stats"><div><strong id="contextDocCount">0 份资料</strong><small>课程知识库</small></div><div><strong id="contextMistakeCount">0 道错题</strong><small>等待你回顾</small></div></div><button id="goDocs" class="context-link" type="button">管理课程资料 <span>↗</span></button></div>
-            <div class="tips"><div class="tips-title"><div><span>NEED A LITTLE INSPIRATION?</span><strong>从这里开始</strong></div><span>✦</span></div><button class="suggestion" data-prompt="请帮我梳理这门课程的核心知识点" type="button"><span><i>01</i> 梳理课程知识点</span><b>↗</b></button><button class="suggestion" data-prompt="请根据课程资料为我制定一周学习计划" data-mode="plan" type="button"><span><i>02</i> 制定一周学习计划</span><b>↗</b></button><button class="suggestion" data-prompt="请根据课程资料出几道练习题" data-mode="quiz" type="button"><span><i>03</i> 根据资料练一练</span><b>↗</b></button></div>
-            <div class="context-footer"><span>LEARN AT YOUR OWN PACE.</span><span>✳</span></div>
-          </aside>
-        </div></div>
+        </div>
         <div id="docs" role="tabpanel" aria-labelledby="tab-docs" class="panel hidden"><div class="section-head"><div><div class="section-kicker">YOUR KNOWLEDGE BASE</div><h2>课程知识库<span>✳</span></h2><p>课件、笔记和题目，都可以成为理解的起点。</p></div><div class="section-number">01 <span>/ 资料</span></div></div><label id="dropZone" class="drop-zone" tabindex="0"><input id="file" type="file" multiple accept=".txt,.md,.pdf,.docx,.pptx,.png,.jpg,.jpeg,.webp" hidden><span class="upload-icon">↥</span><strong>拖放文件到这里，或 <span>点击选择文件</span></strong><small>PDF、Word、PPT、TXT、Markdown、图片 · 单个文件不超过 10 MB</small><em>图片将识别文字、题目与公式；扫描版文档可先转为图片上传。</em></label><div id="uploadProgress" class="upload-progress hidden" role="status"></div><div class="list-header"><div><h3>已导入资料</h3><p>你的资料仅对当前账号可见</p></div><span id="docTotal">0 份资料</span></div><div id="documents" class="documents"></div></div>
         <div id="mistakes" role="tabpanel" aria-labelledby="tab-mistakes" class="panel hidden"><div class="section-head"><div><div class="section-kicker">LEARN FROM PRACTICE</div><h2>错题本<span>✳</span></h2><p>每一次回顾，都是离掌握更近一步。</p></div><div class="section-number">02 <span>/ 复盘</span></div></div><div class="mistake-layout"><div class="mistake-form"><div class="form-heading"><span class="form-heading-icon">✎</span><div><h3>记录一道错题</h3><p>写下卡住你的地方，下次遇见就多一份把握。</p></div></div><label>题目内容<textarea id="mistakeQuestion" maxlength="8000" placeholder="记录遇到的问题或题目…"></textarea></label><label>我的答案或错误原因 <span>（选填）</span><textarea id="mistakeAnswer" maxlength="8000" placeholder="写下你的思路，方便之后复盘…"></textarea></label><button id="addMistake" class="primary" type="button">保存错题 <span>↗</span></button></div><div class="review-card"><span>REFLECT & GROW</span><div class="review-star">✳</div><h3>错过的知识，<br>值得再看一眼。</h3><p>记录不是终点。在学习助手中选择「错题复盘」，一起找到解题思路。</p><button id="quickReview" type="button">开始复盘 <span>↗</span></button></div></div><div class="list-header"><div><h3>我的错题</h3><p>把不确定的地方，慢慢变成自己的知识。</p></div></div><div id="mistakeList"></div></div>
       </div>

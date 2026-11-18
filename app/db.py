@@ -26,6 +26,7 @@ def setup():
         CREATE TABLE IF NOT EXISTS chunks (id BIGSERIAL PRIMARY KEY, document_id BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE, content TEXT NOT NULL, embedding vector NOT NULL);
         CREATE TABLE IF NOT EXISTS conversations (id UUID PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id), course_id BIGINT NOT NULL REFERENCES courses(id), title TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
         CREATE TABLE IF NOT EXISTS messages (id BIGSERIAL PRIMARY KEY, conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE, role TEXT NOT NULL, content TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+        ALTER TABLE messages ADD COLUMN IF NOT EXISTS reasoning TEXT;
         CREATE TABLE IF NOT EXISTS mistakes (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id), course_id BIGINT NOT NULL REFERENCES courses(id), question TEXT NOT NULL, answer TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now());
         ''')
         # A variable-dimension column keeps existing vectors while allowing each user

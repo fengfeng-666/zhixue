@@ -1,3 +1,5 @@
+import asyncio
+import json
 import unittest
 import uuid
 from contextlib import contextmanager
@@ -24,6 +26,7 @@ class FakeDatabase:
         self.mistakes = {(11, 7, 1), (12, 7, 2), (13, 8, 1)}
         self.conversations = {}
         self.messages = []
+        self.reasoning = {}
         self.writes = []
 
     @contextmanager
@@ -49,6 +52,7 @@ class FakeDatabase:
             return Result()
         if sql.startswith('INSERT INTO messages'):
             self.messages.extend([(params[0], params[1], params[2]), (params[3], params[4], params[5])])
+            self.reasoning[params[0]] = params[6]
             self.writes.append(('messages', params[0]))
             return Result()
         raise AssertionError(f'Unexpected query: {sql}')
@@ -93,6 +97,46 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(caught.exception.status_code, 502)
         self.assertEqual(self.database.conversations, {})
         self.assertEqual(self.database.messages, [])
+        self.assertEqual(self.database.writes, [])
+
+    def test_stream_sends_deltas_before_committing_the_final_answer(self):
+        def model_stream(*args):
+            yield {'type': 'reasoning', 'text': '先找资料\n'}
+            yield {'type': 'answer', 'text': '开始'}
+            yield {'type': 'answer', 'text': '回答'}
+            yield {'type': 'complete', 'answer': '开始回答'}
+
+        async def read_stream():
+            response = main.chat_stream(7, main.ChatIn(message='问题'), self.user)
+            stream = response.body_iterator
+            events = [json.loads(await anext(stream)) for _ in range(3)]
+            self.assertEqual([event['type'] for event in events], ['reasoning', 'answer', 'answer'])
+            self.assertEqual(events[0]['text'], '先找资料\n')
+            self.assertEqual(self.database.writes, [])
+            return [json.loads(chunk) async for chunk in stream]
+
+        settings_patch, saver_patch, cache_patch = self.chat_patches()
+        with settings_patch, saver_patch, cache_patch, patch.object(main.ai, 'stream_agent', model_stream):
+            done, = asyncio.run(read_stream())
+        self.assertEqual(done['type'], 'done')
+        conv_id = uuid.UUID(done['conversation_id'])
+        self.assertEqual(self.database.messages, [(conv_id, 'user', '问题'), (conv_id, 'assistant', '开始回答')])
+        self.assertEqual(self.database.reasoning[conv_id], '先找资料\n')
+
+    def test_stream_failure_after_partial_output_does_not_save_messages(self):
+        def model_stream(*args):
+            yield {'type': 'answer', 'text': '部分回答'}
+            raise RuntimeError('upstream connection lost')
+
+        async def read_stream():
+            response = main.chat_stream(7, main.ChatIn(message='问题'), self.user)
+            return [json.loads(chunk) async for chunk in response.body_iterator]
+
+        settings_patch, saver_patch, cache_patch = self.chat_patches()
+        with settings_patch, saver_patch, cache_patch, patch.object(main.ai, 'stream_agent', model_stream):
+            partial, error = asyncio.run(read_stream())
+        self.assertEqual(partial, {'type': 'answer', 'text': '部分回答'})
+        self.assertEqual(error, {'type': 'error', 'detail': main.CHAT_ERROR})
         self.assertEqual(self.database.writes, [])
 
     def test_successful_first_response_saves_conversation_and_messages(self):

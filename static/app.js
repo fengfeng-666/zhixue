@@ -16,7 +16,7 @@ let uploading = false;
 const drafts = new Map();
 const mistakeDrafts = new Map();
 
-async function api(path, options = {}) {
+async function request(path, options = {}) {
   const headers = {...(options.headers || {})};
   if (token) headers.Authorization = `Bearer ${token}`;
   if (options.body && !(options.body instanceof FormData)) {
@@ -24,14 +24,42 @@ async function api(path, options = {}) {
     options.body = JSON.stringify(options.body);
   }
   const response = await fetch('/api' + path, {...options, headers});
-  let data;
-  try { data = await response.json(); } catch { data = null; }
   if (!response.ok) {
+    const data = await response.json().catch(() => null);
     const error = new Error(typeof data?.detail === 'string' ? data.detail : `请求失败（${response.status}），请稍后重试`);
     error.status = response.status;
     throw error;
   }
-  return data;
+  return response;
+}
+
+async function api(path, options) {
+  return (await request(path, options)).json().catch(() => null);
+}
+
+async function streamChat(courseId, body, onEvent) {
+  const response = await request(`/courses/${courseId}/chat/stream`, {method: 'POST', body});
+  if (!response.body) throw new Error('无法读取回答，请重试');
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = '';
+  try {
+    for (;;) {
+      const {done, value} = await reader.read();
+      if (done) throw new Error('回答中断，请重试');
+      const lines = (buffer + value).split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const event = JSON.parse(line);
+        if (event.type === 'done') return event;
+        if (event.type === 'error') throw new Error(event.detail);
+        onEvent(event);
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
 }
 
 function toast(text) {
@@ -175,8 +203,6 @@ async function selectCourse(item) {
   setText('docCount', '…');
   setText('docTotal', '正在加载…');
   setText('mistakeCount', '…');
-  setText('contextDocCount', '正在加载资料…');
-  setText('contextMistakeCount', '正在加载错题…');
   $('documents').replaceChildren(emptyList('正在加载课程资料…'));
   $('mistakeList').replaceChildren(emptyList('正在加载错题…'));
   renderCourses();
@@ -244,7 +270,6 @@ async function loadDocuments(courseId = course?.id, revision = courseRevision) {
     $('documents').replaceChildren(emptyList('课程资料加载失败，请重新选择课程后重试。'));
     setText('docCount', '—');
     setText('docTotal', '资料加载失败');
-    setText('contextDocCount', '资料加载失败');
     throw error;
   }
   if (!isCurrentCourse(courseId, revision) || request !== documentListRevision) return rows;
@@ -252,7 +277,6 @@ async function loadDocuments(courseId = course?.id, revision = courseRevision) {
   list.replaceChildren();
   setText('docCount', String(rows.length));
   setText('docTotal', `${rows.length} 份资料`);
-  setText('contextDocCount', rows.length ? `${rows.length} 份资料已加入` : '还没有课程资料');
   if (!rows.length) list.append(emptyList('还没有课程资料，添加第一份资料，让回答更贴近你的学习内容。'));
   rows.forEach(doc => {
     const item = document.createElement('div');
@@ -312,14 +336,12 @@ async function loadMistakes(courseId = course?.id, revision = courseRevision) {
     if (!isCurrentCourse(courseId, revision) || request !== mistakeListRevision) return [];
     $('mistakeList').replaceChildren(emptyList('错题加载失败，请重新选择课程后重试。'));
     setText('mistakeCount', '—');
-    setText('contextMistakeCount', '错题加载失败');
     throw error;
   }
   if (!isCurrentCourse(courseId, revision) || request !== mistakeListRevision) return rows;
   const list = $('mistakeList');
   list.replaceChildren();
   setText('mistakeCount', String(rows.length));
-  setText('contextMistakeCount', rows.length ? `${rows.length} 道错题待回顾` : '还没有记录错题');
   if (!rows.length) list.append(emptyList('还没有记录错题，把容易出错的地方留在这里，之后可以随时复盘。'));
   rows.forEach(mistake => {
     const item = document.createElement('div');
@@ -497,7 +519,6 @@ function appendMarkdown(parent, text, depth = 0) {
 }
 
 const welcomePrompts = [
-  {label: '理解一个知识点', prompt: '请用通俗的语言和例子，帮我理解这门课程的一个核心知识点。', mode: 'explain'},
   {label: '梳理课程重点', prompt: '请帮我梳理这门课程的核心知识点，并说明它们之间的联系。', mode: 'qa'},
   {label: '制定学习计划', prompt: '请根据课程资料为我制定一周学习计划。', mode: 'plan'}
 ];
@@ -515,13 +536,8 @@ function renderMessages(rows) {
   if (!rows.length) {
     const welcome = document.createElement('div');
     welcome.className = 'welcome';
-    const mark = document.createElement('div');
-    mark.className = 'welcome-mark';
-    mark.textContent = '✳';
     const heading = document.createElement('h2');
-    heading.textContent = '今天，想学点什么？';
-    const description = document.createElement('p');
-    description.textContent = '从一个问题开始，或选择下面的灵感，让学习更有方向。';
+    heading.textContent = '想问这门课的什么？';
     const tags = document.createElement('div');
     tags.className = 'welcome-tags';
     welcomePrompts.forEach(suggestion => {
@@ -531,9 +547,20 @@ function renderMessages(rows) {
       tag.onclick = () => usePrompt(suggestion.prompt, suggestion.mode);
       tags.append(tag);
     });
-    welcome.append(mark, heading, description, tags);
+    welcome.append(heading, tags);
     list.append(welcome);
   } else rows.forEach(appendMessage);
+}
+function reasoningDetails(text) {
+  const details = document.createElement('details');
+  details.className = 'message-reasoning';
+  const summary = document.createElement('summary');
+  summary.textContent = '思考过程';
+  const content = document.createElement('div');
+  content.className = 'reasoning-content';
+  content.textContent = text;
+  details.append(summary, content);
+  return details;
 }
 function appendMessage(message) {
   $('messages').querySelector('.welcome')?.remove();
@@ -547,16 +574,66 @@ function appendMessage(message) {
   content.className = 'message-content';
   if (role === 'assistant') appendMarkdown(content, message.content);
   else content.textContent = message.content;
-  el.append(meta, content);
+  el.append(meta);
+  if (role === 'assistant' && message.reasoning?.trim()) el.append(reasoningDetails(message.reasoning));
+  el.append(content);
   $('messages').append(el);
   $('messages').scrollTop = $('messages').scrollHeight;
   return el;
 }
-function appendPending() {
-  const pending = appendMessage({role: 'assistant', content: '正在结合你的问题思考，请稍等…'});
-  pending.classList.add('message-pending');
-  pending.setAttribute('role', 'status');
-  return pending;
+function createStreamingReply() {
+  const message = appendMessage({role: 'assistant', content: ''});
+  const list = $('messages');
+  const answer = message.querySelector('.message-content');
+  const answerText = answer.appendChild(document.createTextNode(''));
+  answer.classList.add('streaming-text');
+  const status = document.createElement('div');
+  status.className = 'message-pending';
+  status.setAttribute('role', 'status');
+  status.textContent = '正在等待模型回应…';
+  message.insertBefore(status, answer);
+  const details = reasoningDetails('');
+  const summary = details.querySelector('summary');
+  const reasoning = details.querySelector('.reasoning-content').appendChild(document.createTextNode(''));
+  let scrollFrame = null;
+
+  function followReply() {
+    if (scrollFrame !== null || list.scrollHeight - list.scrollTop - list.clientHeight > 48) return;
+    scrollFrame = requestAnimationFrame(() => {
+      if (message.isConnected) list.scrollTop = list.scrollHeight;
+      scrollFrame = null;
+    });
+  }
+
+  return {
+    message,
+    update(event) {
+      followReply();
+      if (event.type === 'reasoning') {
+        if (!details.isConnected) message.insertBefore(details, status);
+        summary.textContent = '正在思考…';
+        reasoning.appendData(event.text);
+        status.textContent = '';
+      } else if (event.type === 'answer') {
+        summary.textContent = '思考过程';
+        status.textContent = '';
+        answerText.appendData(event.text);
+      } else if (event.type === 'tool') {
+        summary.textContent = '思考过程';
+        status.textContent = '正在检索相关内容…';
+        answerText.data = '';
+      }
+    },
+    finish(text) {
+      followReply();
+      summary.textContent = '思考过程';
+      if (!reasoning.data.trim()) details.remove();
+      status.remove();
+      answer.classList.remove('streaming-text');
+      answer.replaceChildren();
+      appendMarkdown(answer, text);
+    }
+  };
 }
 function markMessageFailed(el, text, error) {
   el.classList.add('message-error');
@@ -631,7 +708,7 @@ async function sendMessage(explicitText, fromInput = true) {
   const mode = $('mode').value;
   chatRequest = {courseId: selectedCourse, conversationId: oldConversation, text};
   const sendButtonMarkup = $('send').innerHTML;
-  $('send').textContent = '思考中…';
+  $('send').textContent = '生成中…';
   syncSendState();
   $('send').setAttribute('aria-busy', 'true');
   if (fromInput) {
@@ -640,13 +717,11 @@ async function sendMessage(explicitText, fromInput = true) {
     saveDraft();
   }
   const userMessage = appendMessage({role: 'user', content: text});
-  const pending = appendPending();
+  const reply = createStreamingReply();
   try {
-    const result = await api(`/courses/${selectedCourse}/chat`, {
-      method: 'POST',
-      body: {message: text, mode, conversation_id: oldConversation || null}
+    const result = await streamChat(selectedCourse, {message: text, mode, conversation_id: oldConversation || null}, event => {
+      if (isCurrentView(selectedCourse, revision, viewRevision)) reply.update(event);
     });
-    pending.remove();
     if (isCurrentView(selectedCourse, revision, viewRevision)) {
       const oldKey = draftKey(selectedCourse, oldConversation);
       const nextKey = draftKey(selectedCourse, result.conversation_id);
@@ -656,7 +731,7 @@ async function sendMessage(explicitText, fromInput = true) {
       }
       conversation = result.conversation_id;
       localStorage.setItem(conversationStorageKey(selectedCourse), conversation);
-      appendMessage({role: 'assistant', content: result.answer});
+      reply.finish(result.answer);
       await loadConversations(selectedCourse, revision).catch(() => {});
     } else if (course?.id === selectedCourse) {
       await loadConversations(selectedCourse, courseRevision).catch(() => {});
@@ -668,7 +743,7 @@ async function sendMessage(explicitText, fromInput = true) {
       toast('回答已生成，可在课程对话中查看');
     }
   } catch (error) {
-    pending.remove();
+    reply.message.remove();
     if (isCurrentView(selectedCourse, revision, viewRevision)) {
       markMessageFailed(userMessage, text, error);
     } else {
@@ -695,7 +770,7 @@ function openCourseDialog() {
   $('courseDialog').showModal();
   $('newCourseName').focus();
 }
-for (const id of ['addCourse', 'firstCourse', 'emptyCourse', 'onboardCourse']) $(id)?.addEventListener('click', openCourseDialog);
+for (const id of ['addCourse', 'firstCourse', 'emptyCourse']) $(id).addEventListener('click', openCourseDialog);
 $('courseForm').onsubmit = async event => {
   event.preventDefault();
   const name = $('newCourseName').value.trim();
@@ -845,8 +920,6 @@ button('addMistake', async () => {
   toast('错题已保存');
 });
 
-$('goDocs').onclick = () => showTab('docs');
-$('quickUpload')?.addEventListener('click', () => showTab('docs'));
 $('quickReview')?.addEventListener('click', () => {
   showTab('chat');
   $('mode').value = 'review';
@@ -857,7 +930,6 @@ $('quickReview')?.addEventListener('click', () => {
   }
   $('question').focus();
 });
-document.querySelectorAll('.suggestion').forEach(el => el.onclick = () => usePrompt(el.dataset.prompt, el.dataset.mode));
 $('openPreference').onclick = () => { closeMobileMenu(); $('preferenceDialog').showModal(); };
 document.querySelectorAll('.close-dialog').forEach(el => el.onclick = () => el.closest('dialog').close());
 async function openModelSettings() {
@@ -876,8 +948,8 @@ async function openModelSettings() {
   closeMobileMenu();
   $('settingsDialog').showModal();
 }
-for (const id of ['openSettings', 'openSettingsSide', 'topSettings', 'onboardSettings']) {
-  $(id)?.addEventListener('click', () => openModelSettings().catch(error => toast(error.message)));
+for (const id of ['openSettings', 'topSettings']) {
+  $(id).addEventListener('click', () => openModelSettings().catch(error => toast(error.message)));
 }
 function settingsBody(clear = false) {
   return {

@@ -3,13 +3,13 @@ import json
 import os
 import secrets
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from pathlib import Path
 from typing import Literal
 
 import redis
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langgraph.checkpoint.postgres import PostgresSaver
 from pydantic import BaseModel, Field
@@ -246,15 +246,14 @@ def history(course_id: int, conversation_id: uuid.UUID, user=Depends(current_use
                 return json.loads(cached)
         except redis.RedisError:
             pass
-        rows = conn.execute('SELECT role,content,created_at FROM messages WHERE conversation_id=%s ORDER BY id', (conversation_id,)).fetchall()
+        rows = conn.execute('SELECT role,content,created_at,reasoning FROM messages WHERE conversation_id=%s ORDER BY id', (conversation_id,)).fetchall()
         try:
             cache().setex(key, 3600, json.dumps(rows, default=str, ensure_ascii=False))
         except redis.RedisError:
             pass
         return rows
 
-@app.post('/api/courses/{course_id}/chat')
-def chat(course_id: int, data: ChatIn, user=Depends(current_user)):
+def prepare_chat(course_id, data, user):
     config = settings.load(user['id'])
     if not config['api_key']:
         raise HTTPException(400, '请先在模型设置中配置 API Key')
@@ -265,26 +264,75 @@ def chat(course_id: int, data: ChatIn, user=Depends(current_user)):
             row = conn.execute('SELECT id FROM conversations WHERE id=%s AND user_id=%s AND course_id=%s', (conversation_id,user['id'],course_id)).fetchone()
             if not row:
                 raise HTTPException(404, '会话不存在')
-    try:
-        with PostgresSaver.from_conn_string(db.DATABASE_URL) as saver:
-            answer = ai.run_agent(user['id'],course_id,conversation_id,data.message,data.mode,user['preference'],saver,config)
-    except ai.EmbeddingError as exc:
-        raise HTTPException(502, str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(502, '生成失败，请检查模型、网络和数据库配置后重试') from exc
+    return config, conversation_id
+
+
+def save_chat(course_id, data, user, conversation_id, answer, reasoning=None):
     with db.connection() as conn:
         # The graph stores checkpoints separately using the generated UUID.  Only
         # create the visible conversation after a successful first response, and
         # commit it together with its messages.
         if not data.conversation_id:
             conn.execute('INSERT INTO conversations (id,user_id,course_id,title) VALUES (%s,%s,%s,%s)', (conversation_id,user['id'],course_id,data.message[:40]))
-        conn.execute('INSERT INTO messages (conversation_id,role,content) VALUES (%s,%s,%s),(%s,%s,%s)', (conversation_id,'user',data.message,conversation_id,'assistant',answer))
+        conn.execute('INSERT INTO messages (conversation_id,role,content,reasoning) VALUES (%s,%s,%s,NULL),(%s,%s,%s,%s)', (conversation_id,'user',data.message,conversation_id,'assistant',answer,reasoning))
     try:
         key = f'conversation:{user["id"]}:{conversation_id}'
         cache().delete(key)
     except redis.RedisError:
         pass
+
+
+CHAT_ERROR = '生成失败，请检查模型、网络和数据库配置后重试'
+
+
+@app.post('/api/courses/{course_id}/chat')
+def chat(course_id: int, data: ChatIn, user=Depends(current_user)):
+    config, conversation_id = prepare_chat(course_id, data, user)
+    try:
+        with PostgresSaver.from_conn_string(db.DATABASE_URL) as saver:
+            answer = ai.run_agent(user['id'],course_id,conversation_id,data.message,data.mode,user['preference'],saver,config)
+    except ai.EmbeddingError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, CHAT_ERROR) from exc
+    save_chat(course_id, data, user, conversation_id, answer)
     return {'conversation_id':str(conversation_id),'answer':answer}
+
+
+@app.post('/api/courses/{course_id}/chat/stream')
+def chat_stream(course_id: int, data: ChatIn, user=Depends(current_user)):
+    config, conversation_id = prepare_chat(course_id, data, user)
+
+    def encode(event):
+        return json.dumps(event, ensure_ascii=False) + '\n'
+
+    def events():
+        reasoning = []
+        answer = None
+        try:
+            with PostgresSaver.from_conn_string(db.DATABASE_URL) as saver:
+                stream = ai.stream_agent(user['id'], course_id, conversation_id, data.message, data.mode, user['preference'], saver, config)
+                with closing(stream):
+                    for event in stream:
+                        if event['type'] == 'complete':
+                            answer = event['answer']
+                            continue
+                        if event['type'] == 'reasoning':
+                            reasoning.append(event['text'])
+                        yield encode(event)
+            if answer is None:
+                raise ValueError('回答未完成')
+            save_chat(course_id, data, user, conversation_id, answer, ''.join(reasoning) or None)
+        except ai.EmbeddingError as exc:
+            yield encode({'type': 'error', 'detail': str(exc)})
+        except Exception:
+            yield encode({'type': 'error', 'detail': CHAT_ERROR})
+        else:
+            yield encode({'type': 'done', 'conversation_id': str(conversation_id), 'answer': answer})
+
+    return StreamingResponse(events(), media_type='application/x-ndjson', headers={
+        'Cache-Control': 'no-cache, no-transform', 'X-Accel-Buffering': 'no',
+    })
 
 @app.get('/api/courses/{course_id}/mistakes')
 def mistakes(course_id: int, user=Depends(current_user)):
